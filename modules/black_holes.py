@@ -1,14 +1,33 @@
 from modules.my_functions import *
 
 
+def straight_line(x,m,q):
+    return m*x+q
+
+
 
 def logLx_to_logMbh_acc_rate(logLx, eps, inverse=False):
     #logLx [erg/s]
     if inverse:
-        return 10.**logLx * eps * c**2 * Msun / erg_to_J / sec_to_yr #[Msun/yr]
+        return np.log10( 10.**logLx * eps * c**2 * Msun / erg_to_J / sec_to_yr ) #[Msun/yr]
     elif not inverse:
-        return 10.**logLx / eps / c**2 / Msun * erg_to_J * sec_to_yr #[Msun/yr]
+        return np.log10( 10.**logLx / eps / c**2 / Msun * erg_to_J * sec_to_yr ) #[Msun/yr]
 
+    
+def Mbh_sigma_MN18(sigma):
+    """
+    Martin-Navarro+2018
+    """
+    return 4.07*sigma-1.21
+
+def Mbh_sigma_Shankar16(sigma):
+    """
+    Shankar+2016 intrinsic
+    """
+    return 5.7*(sigma-np.log10(200))+7.8
+
+def Mbh_sigma_deNicola(sigma):
+    return line_across_2_points(sigma, 1.8084, 5.8654, 2.7684, 10.7198)
 
 
 def ed(z,logLx):
@@ -253,3 +272,34 @@ def compute_BHAR_function_cat(nmbhdot,nz,mbhdotlog_cat,mbhdotlog,volume):
         mbhdotlog_cat[np.logical_not(np.isfinite(mbhdotlog_cat[:,iz])),iz] = -66.
         phimbhdot_cat[:,iz] = np.histogram(mbhdotlog_cat[:,iz], bins=np.arange(mbhdotlog[0]-0.05, mbhdotlog[-1]+0.1, 0.1))[0] / 0.1 / volume
     return phimbhdot_cat
+
+
+
+def add_BH_mergers_SatGen_tree(z, nz, nhalo, tree, mbh, logmbh, logmstar_integrated, fgas):
+    mbh_with_mergers=mbh.copy()
+    b=0.2; mslog_bhmsm=np.arange(7,12.5,b)
+    mbhlog_bhmsm = np.array([ np.mean(logmbh[np.logical_and.reduce((logmbh[:,nearest(z,0)]>0., logmstar_integrated[:,nearest(z,0)]>m-b/2., logmstar_integrated[:,nearest(z,0)]<=m+b/2.)),nearest(z,0)]) for m in mslog_bhmsm ])
+    mbh_mstar_interp=interp1d(mslog_bhmsm[np.isfinite(mbhlog_bhmsm)], mbhlog_bhmsm[np.isfinite(mbhlog_bhmsm)], fill_value="extrapolate")
+    tree["mbh"]=np.array([ np.array([mbh_mstar_interp(tree["mstar"][ihalo][i]) for i in range(tree["mstar"][ihalo].size)]) for ihalo in range(nhalo) ])
+    for ihalo in range(nhalo):
+        tree["mbh"][ihalo][np.logical_not(np.isfinite(tree["mbh"][ihalo]))]=-66.
+
+    tree["mbhratio"]=np.array([ np.array([ 10.**tree["mbh"][ihalo][i]/mbh[ihalo,nearest(z,tree["z_merge"][ihalo][i])] for i in range(tree["mhalo"][ihalo].size)]) for ihalo in range(nhalo) ])
+    tree["bh_tau_delay"] = np.array([ np.array([ 0.01 * (0.1/tree["mbhratio"][ihalo][i]) * (0.3/fgas[ihalo,nearest(z,tree["z_merge"][ihalo][i])]) for i in range(tree["mhalo"][ihalo].size)]) for ihalo in range(nhalo) ])
+    def Bh_age_merge(z_merge, bh_tau_delay):
+        if z_merge>0.:
+            return cosmo.age(z_merge)+bh_tau_delay
+        else:
+            return cosmo.age(0.)
+    tree["bh_age_merge"] = np.array([ np.array([ Bh_age_merge(tree["z_merge"][ihalo][i],tree["bh_tau_delay"][ihalo][i]) for i in range(tree["z_merge"][ihalo].size)]) for ihalo in range(nhalo) ])
+    tree["bh_z_merge"] = np.array([ np.array([ -1. for i in range(tree["z_merge"][ihalo].size)]) for ihalo in range(nhalo) ])
+    age_today=cosmo.age(0.)
+    for ihalo in range(nhalo):
+        tree["bh_z_merge"][ihalo][tree["bh_age_merge"][ihalo]<age_today] = cosmo.age(tree["bh_age_merge"][ihalo][tree["bh_age_merge"][ihalo]<age_today], inverse=True)
+
+    merger_history = np.array([[ np.sum(10**tree["mbh"][ihalo][np.logical_and(tree["bh_z_merge"][ihalo]>Z,tree["order"][ihalo]<=1)]) for Z in z] for ihalo in range(nhalo)])
+    mbh_with_mergers += merger_history
+    logmbh_with_mergers = np.log10(mbh_with_mergers)
+    
+    return mbh_with_mergers, logmbh_with_mergers, tree
+
