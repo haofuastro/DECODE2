@@ -4,7 +4,7 @@ type: software
 title: "DECODE: A semi-empirical model of galaxy evolution"
 version: "2.0.0"
 date-released: "2026-10-20"
-license: "LICENSE_IDENTIFIER"
+license: "MIT"
 authors:
   - family-names: "Fu"
     given-names: "Hao"
